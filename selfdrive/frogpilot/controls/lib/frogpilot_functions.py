@@ -33,31 +33,61 @@ def update_frogpilot_toggles():
     params_memory.put_bool("FrogPilotTogglesUpdated", False)
   threading.Thread(target=update_params).start()
 
-def backup_directory(backup, destination, success_msg, fail_msg):
-  os.makedirs(destination, exist_ok=True)
+def cleanup_backups(directory, limit, minimum_backup_size=0, compressed=False):
+  if compressed:
+    backups = sorted(glob.glob(os.path.join(directory, "*_auto*")), key=os.path.getmtime, reverse=True)
+    for backup in backups:
+      if os.path.getsize(backup) < minimum_backup_size:
+        run_cmd(["sudo", "rm", "-rf", backup], f"Deleted incomplete backup: {os.path.basename(backup)}", f"Failed to delete incomplete backup: {os.path.basename(backup)}")
+  else:
+    backups = sorted(glob.glob(os.path.join(directory, "*_auto*")), key=os.path.getmtime, reverse=True)
+
+  for old_backup in backups[limit:]:
+    run_cmd(["sudo", "rm", "-rf", old_backup], f"Deleted oldest backup: {os.path.basename(old_backup)}", f"Failed to delete backup: {os.path.basename(old_backup)}")
+
+def backup_directory(backup, destination, success_message, fail_message, minimum_backup_size=0, params=None, compressed=False):
   try:
-    run_cmd(['sudo', 'cp', '-a', os.path.join(backup, '.'), destination], success_msg, fail_msg)
+    if not compressed:
+      os.makedirs(destination, exist_ok=False)
+      run_cmd(["sudo", "rsync", "-avq", os.path.join(backup, "."), destination], success_message, fail_message)
+    else:
+      compressed_backup = f"{destination}.tar.xz"
+      if os.path.exists(compressed_backup):
+        return
+
+      os.makedirs(destination, exist_ok=True)
+      run_cmd(["sudo", "rsync", "-avq", os.path.join(backup, "."), destination], success_message, fail_message)
+
+      with tarfile.open(compressed_backup, "w:xz") as tar:
+        tar.add(destination, arcname=os.path.basename(destination))
+
+      shutil.rmtree(destination)
+      print(f"Backup successfully compressed to {compressed_backup}.")
+
+      compressed_backup_size = os.path.getsize(compressed_backup)
+      if compressed_backup_size < minimum_backup_size or minimum_backup_size == 0:
+        params.put_int("MinimumBackupSize", compressed_backup_size)
+  except FileExistsError:
+    print(f"Destination '{destination}' already exists. Backup aborted.")
+  except subprocess.CalledProcessError:
+    print(fail_message)
   except OSError as e:
-    if e.errno == 28:
+    if e.errno == errno.ENOSPC:
       print("Not enough space to perform the backup.")
     else:
       print(f"Failed to backup due to unexpected error: {e}")
 
-def cleanup_backups(directory, limit):
-  backups = sorted(glob.glob(os.path.join(directory, "*_auto")), key=os.path.getmtime, reverse=True)
-  for old_backup in backups[limit:]:
-    subprocess.run(['sudo', 'rm', '-rf', old_backup], check=True)
-    print(f"Deleted oldest backup: {os.path.basename(old_backup)}")
+def backup_frogpilot(build_metadata, params):
+  minimum_backup_size = params.get_int("MinimumBackupSize")
 
-def backup_frogpilot(build_metadata):
   backup_path = "/data/backups"
-  cleanup_backups(backup_path, 4)
+  cleanup_backups(backup_path, 4, minimum_backup_size, True)
 
   branch = build_metadata.channel
   commit = build_metadata.openpilot.git_commit_date[12:-16]
 
-  backup_dir = f"{backup_path}/{branch}_{commit}_auto"
-  backup_directory(BASEDIR, backup_dir, f"Successfully backed up FrogPilot to {backup_dir}.", f"Failed to backup FrogPilot to {backup_dir}.")
+  backup_dir = os.path.join(backup_path, f"{branch}_{commit}_auto")
+  backup_directory(BASEDIR, backup_dir, f"Successfully backed up FrogPilot to {backup_dir}.", f"Failed to backup FrogPilot to {backup_dir}.", minimum_backup_size, params, True)
 
 def backup_toggles(params, params_storage):
   for key in params.all_keys():
@@ -69,7 +99,7 @@ def backup_toggles(params, params_storage):
   backup_path = "/data/toggle_backups"
   cleanup_backups(backup_path, 9)
 
-  backup_dir = f"{backup_path}/{datetime.datetime.now().strftime('%Y-%m-%d_%I-%M%p').lower()}_auto"
+  backup_dir = os.path.join(backup_path, datetime.datetime.now().strftime('%Y-%m-%d_%I-%M%p').lower() + "_auto")
   backup_directory("/data/params/d", backup_dir, f"Successfully backed up toggles to {backup_dir}.", f"Failed to backup toggles to {backup_dir}.")
 
 def calculate_lane_width(lane, current_lane, road_edge):
