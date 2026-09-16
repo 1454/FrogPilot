@@ -17,6 +17,8 @@ def _reset_policy():
   policy._lane_lock_error_logged = False
   policy._lane_lock_mode = None
   policy._lane_lock_last_log_time = 0.0
+  policy._lane_lock_mode_sink = lambda _mode: None
+  policy._lane_lock_params = None
 
 
 @pytest.fixture(autouse=True)
@@ -187,6 +189,40 @@ def test_mode_updates_even_when_log_is_rate_limited():
   policy.log_lane_lock_mode("lane-policy off")
   policy.log_lane_lock_mode("lane-policy fallback: blinker")
   assert policy._lane_lock_mode == "lane-policy fallback: blinker"
+
+
+def test_lock_mode_param_updates_on_transition_not_every_frame():
+  writes = []
+  policy._lane_lock_mode_sink = writes.append
+  policy.apply_lane_lock(_straight_lane_output(), 0.0, 20.0, lane_policy_enabled=False)
+  policy.apply_lane_lock(_straight_lane_output(), 0.0, 20.0, lane_policy_enabled=False)
+  policy.apply_lane_lock(_straight_lane_output(), 0.0, 20.0, lane_policy_enabled=True)
+  policy.apply_lane_lock(_straight_lane_output(), 0.0, 20.0, lane_policy_enabled=True)
+  assert writes[0] == "lane-policy off"
+  assert writes[1] == "locking (lane-policy on)"
+  assert writes.count("lane-policy off") == 1
+  assert writes.count("locking (lane-policy on)") == 1
+
+
+def test_locking_then_full_midpoint_publishes_both_modes():
+  writes = []
+  policy._lane_lock_mode_sink = writes.append
+  model = _straight_lane_output()
+  policy.apply_lane_lock(model, 0.0, 20.0, lane_policy_enabled=True)
+  assert policy._lane_lock_mode == "locking (lane-policy on)"
+  for _ in range(80):
+    policy.apply_lane_lock(model, 0.0, 20.0, lane_policy_enabled=True)
+  assert policy._lane_lock_mode == "full-lane midpoint (lane-policy on)"
+  assert writes == ["locking (lane-policy on)", "full-lane midpoint (lane-policy on)"]
+
+
+def test_path_unavailable_mode_is_published():
+  writes = []
+  policy._lane_lock_mode_sink = writes.append
+  model = _straight_lane_output(v_ego=0.2)
+  policy.apply_lane_lock(model, 0.0, 0.2, lane_policy_enabled=True)
+  assert policy._lane_lock_mode == "lane-policy fallback: path unavailable"
+  assert writes == ["lane-policy fallback: path unavailable"]
 
 
 def test_off_frames_emit_lane_policy_off_once(monkeypatch):

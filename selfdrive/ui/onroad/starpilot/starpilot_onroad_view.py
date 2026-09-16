@@ -18,6 +18,7 @@ from openpilot.selfdrive.ui.onroad.starpilot.pulse_glide import get_pulse_glide_
 from openpilot.selfdrive.ui.onroad.starpilot.pip_sidecam import PipSideCamera
 from openpilot.selfdrive.ui.onroad.starpilot.favorite_radial_menu import FavoriteRadialMenu
 from openpilot.selfdrive.ui.onroad.starpilot.weather_icon import render_weather_icon
+from openpilot.selfdrive.ui.onroad.starpilot.lkas_lane_policy_test_ui import lkas_lane_policy_test_hud_lines
 from openpilot.selfdrive.ui.lib.starpilot_status import (
   get_screen_edge_color,
 )
@@ -185,6 +186,7 @@ class StarPilotOnroadView(AugmentedRoadView):
       return
 
     self._render_developer_metrics()
+    self._render_lkas_lane_policy_test_ui()
 
     self.layout_manager.render_widgets(exclude={"speed_limit", "set_speed"})
 
@@ -250,6 +252,37 @@ class StarPilotOnroadView(AugmentedRoadView):
         ),
       },
     )
+
+  def _render_lkas_lane_policy_test_ui(self):
+    """Glanceable testing HUD. Gated by LkasLanePolicyTestUi. Not a driver feature."""
+    car_state = ui_state.sm["carState"] if ui_state.sm.valid.get("carState", False) else None
+    lines = lkas_lane_policy_test_hud_lines(self._params, car_state)
+    if not lines:
+      return
+
+    font = self._font_medium
+    font_size = 32
+    line_gap = 6
+    x = self._content_rect.x + 18
+    y = self._content_rect.y + 14
+    lock_line = lines[-1] if lines else ""
+    if "full midpoint" in lock_line:
+      color = rl.Color(80, 220, 120, 255)
+    elif "LOCK locking" in lock_line:
+      color = rl.Color(250, 210, 70, 255)
+    elif lock_line.endswith(" off"):
+      color = rl.Color(200, 200, 200, 255)
+    else:
+      color = rl.Color(255, 170, 70, 255)
+
+    for line in lines:
+      pos = rl.Vector2(x, y)
+      rl.draw_text_ex(font, line, rl.Vector2(pos.x - 1, pos.y - 1), font_size, 0, rl.BLACK)
+      rl.draw_text_ex(font, line, rl.Vector2(pos.x + 1, pos.y - 1), font_size, 0, rl.BLACK)
+      rl.draw_text_ex(font, line, rl.Vector2(pos.x - 1, pos.y + 1), font_size, 0, rl.BLACK)
+      rl.draw_text_ex(font, line, rl.Vector2(pos.x + 1, pos.y + 1), font_size, 0, rl.BLACK)
+      rl.draw_text_ex(font, line, pos, font_size, 0, color)
+      y += font_size + line_gap
 
   def _render_developer_metrics(self):
     toggles = ui_state.starpilot_toggles
