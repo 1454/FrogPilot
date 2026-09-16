@@ -54,12 +54,11 @@ _lane_lock_last_log_time = 0.0
 def reset_lane_lock() -> None:
   """Discard any lane target so the caller immediately receives raw E2E."""
   global _lane_lock_weight, _lane_lock_lane_curvature
-  global _lane_lock_has_lane_curvature, _lane_lock_full_active, _lane_lock_mode
+  global _lane_lock_has_lane_curvature, _lane_lock_full_active
   _lane_lock_weight = 0.0
   _lane_lock_lane_curvature = 0.0
   _lane_lock_has_lane_curvature = False
   _lane_lock_full_active = False
-  _lane_lock_mode = None
 
 
 def log_lane_lock_mode(mode: str) -> None:
@@ -83,8 +82,12 @@ def inner_lane_line_probs(model_output: dict[str, np.ndarray]) -> tuple[float, f
 
 
 def apply_lane_lock(model_output: dict[str, np.ndarray], e2e_curvature: float, v_ego: float,
-                    blinkers_active: bool = False, lane_policy_enabled: bool = False) -> float:
+                    blinkers_active: bool = False, lane_policy_enabled: bool | None = None) -> float:
   """
+  With lane_policy_enabled None, return E2E curvature and leave lock state alone.
+  Used by Model Lab longitudinal get_action_from_model so a second call cannot
+  reset the lateral lock.
+
   With lane policy off, return the exact upstream E2E curvature and clear state.
 
   With lane policy on, use the fitted midpoint of the two inner lane lines only
@@ -95,6 +98,9 @@ def apply_lane_lock(model_output: dict[str, np.ndarray], e2e_curvature: float, v
   global _lane_lock_weight, _lane_lock_lane_curvature
   global _lane_lock_has_lane_curvature, _lane_lock_full_active
   global _lane_lock_error_logged
+
+  if lane_policy_enabled is None:
+    return float(e2e_curvature)
 
   if not lane_policy_enabled:
     reset_lane_lock()

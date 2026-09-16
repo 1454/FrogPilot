@@ -403,7 +403,7 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
                           is_v9: bool, is_v14: bool, is_v15: bool, starpilot_toggles,
                           lat_smooth_seconds=LAT_SMOOTH_SECONDS, long_smooth_seconds=LONG_SMOOTH_SECONDS,
                           is_v16: bool = False, blinkers_active: bool = False,
-                          lane_policy_enabled: bool = False) -> log.ModelDataV2.Action:
+                          lane_policy_enabled: bool | None = None) -> log.ModelDataV2.Action:
     if is_v14 or is_v15 or is_v16:
       desired_curv_unscaled, desired_accel = model_output['action'][0]
       if is_v15 or is_v16:
@@ -1493,6 +1493,7 @@ def main(demo=False):
           v_ego, model_lab_longitudinal.mlsim, model_lab_longitudinal.is_v9,
           model_lab_longitudinal.is_v14, model_lab_longitudinal.is_v15, starpilot_toggles,
           lat_smooth_seconds, long_smooth_seconds, is_v16=model_lab_longitudinal.is_v16,
+          lane_policy_enabled=None,
         )
         action = log.ModelDataV2.Action(**hybrid_action_values(lateral_action, longitudinal_action))
       else:

@@ -38,7 +38,6 @@ def _lane_probs(left=0.99, right=0.99, far_left=0.1, far_right=0.1):
 def _straight_lane_output(left_prob=0.99, right_prob=0.99, center_y=0.0, width=3.6,
                           v_ego=20.0, path_y=None, far_left_prob=0.1, far_right_prob=0.1):
   n = ModelConstants.IDX_N
-  x = np.asarray(ModelConstants.X_IDXS, dtype=np.float64)
   left = np.full(n, center_y + width / 2.0)
   right = np.full(n, center_y - width / 2.0)
   lane_lines = np.zeros((1, ModelConstants.NUM_LANE_LINES, n, 2), dtype=np.float64)
@@ -116,6 +115,25 @@ def test_full_lane_engages_when_policy_on_and_lines_are_clean():
   assert policy._lane_lock_weight == pytest.approx(1.0, abs=0.02)
 
 
+def test_skipped_second_apply_ramps_like_single_model():
+  model = _straight_lane_output(center_y=0.4)
+  single_weights = []
+  for _ in range(80):
+    policy.apply_lane_lock(model, 0.0, 20.0, lane_policy_enabled=True)
+    single_weights.append(policy._lane_lock_weight)
+
+  _reset_policy()
+  dual_weights = []
+  for _ in range(80):
+    policy.apply_lane_lock(model, 0.0, 20.0, lane_policy_enabled=True)
+    skipped = policy.apply_lane_lock(model, 0.0, 20.0, lane_policy_enabled=None)
+    assert skipped == pytest.approx(0.0)
+    dual_weights.append(policy._lane_lock_weight)
+
+  assert dual_weights == pytest.approx(single_weights)
+  assert dual_weights[-1] == pytest.approx(1.0, abs=0.02)
+
+
 def test_invalid_geometry_clears_hold_hysteresis():
   model = _straight_lane_output()
   policy.apply_lane_lock(model, 0.0, 20.0, lane_policy_enabled=True)
@@ -169,6 +187,17 @@ def test_mode_updates_even_when_log_is_rate_limited():
   policy.log_lane_lock_mode("lane-policy off")
   policy.log_lane_lock_mode("lane-policy fallback: blinker")
   assert policy._lane_lock_mode == "lane-policy fallback: blinker"
+
+
+def test_off_frames_emit_lane_policy_off_once(monkeypatch):
+  t = {"now": 10.0}
+  emits = []
+  monkeypatch.setattr(policy.time, "monotonic", lambda: t["now"])
+  monkeypatch.setattr(policy.cloudlog, "info", lambda msg: emits.append(msg))
+  for i in range(200):
+    t["now"] = 10.0 + i * 1.0
+    policy.apply_lane_lock(_straight_lane_output(), 0.0, 20.0, lane_policy_enabled=False)
+  assert emits == ["lkas-lp-toggle: lane-policy off"]
 
 
 def test_get_action_from_model_applies_policy_before_smoothing():

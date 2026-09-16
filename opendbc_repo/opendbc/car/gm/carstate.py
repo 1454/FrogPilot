@@ -149,7 +149,7 @@ class CarState(CarStateBase):
     self.lkas_enabled = 0
     # Session lane-policy bit for modeld. Separate from the raw LKA button
     # used for existing StarPilot button remaps.
-    self.oem_lkas_enabled = False
+    self.lane_policy_enabled = False
     self.pcm_acc_status = AccState.OFF
     self.system_power_mode = 0
     self.startup_acc_fault_suppression_timer = 0.0
@@ -514,14 +514,14 @@ class CarState(CarStateBase):
     lkas_events = [] if (suppress_malibu_side_buttons or suppress_bolt_cancel_lkas) else create_button_events(
       self.lkas_enabled, self.lkas_previously_enabled, {1: ButtonType.lkas}
     )
-    self.oem_lkas_enabled = update_lane_policy_button_state(
-      self.oem_lkas_enabled,
+    self.lane_policy_enabled = update_lane_policy_button_state(
+      self.lane_policy_enabled,
       self.lkas_enabled,
       self.lkas_previously_enabled,
       bool(getattr(starpilot_toggles, "lkas_lane_policy_via_lkas", False)),
       suppress_malibu_side_buttons or suppress_bolt_cancel_lkas,
     )
-    ret.lkasEnabled = self.oem_lkas_enabled
+    ret.lkasEnabled = self.lane_policy_enabled
     hard_cruise_events = create_button_events(
       self.hard_cruise_buttons, prev_hard_cruise_buttons, HARD_BUTTONS_DICT, unpressed_btn=CruiseButtons.INIT
     )
