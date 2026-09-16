@@ -29,6 +29,58 @@ ButtonType = structs.CarState.ButtonEvent.Type
 TransmissionType = structs.CarParams.TransmissionType
 NetworkLocation = structs.CarParams.NetworkLocation
 
+
+LKAS_HUD_DBC = "gm_global_a_lowspeed_1818125"
+LKAS_HUD_MSG = "Lane_Departure_Warning_LS"
+LKAS_HUD_SIGNAL = "LnKpAstDisbldIO"
+# Live comma panda buses. PT=0, obstacle=1, camera/chassis=2.
+LKAS_HUD_BUSES = (Bus.body, Bus.adas, Bus.chassis)
+
+
+def oem_lkas_from_hud_disabled(disabled_io: int) -> bool:
+  """LnKpAstDisbldIO is 1 when the dash reports lane-keep assist disabled."""
+  return int(disabled_io) == 0
+
+
+def read_oem_lkas_hud(can_parsers) -> bool | None:
+  """Return OEM LKAS enabled from the newest HUD frame on a live harness bus."""
+  newest_hud_timestamp = 0
+  lkas_hud_enabled = None
+  getter = getattr(can_parsers, "get", None)
+  for hud_bus in LKAS_HUD_BUSES:
+    hud_cp = getter(hud_bus) if getter is not None else None
+    if hud_cp is None:
+      continue
+    signal_updates = hud_cp.vl_all.get(LKAS_HUD_MSG, {}).get(LKAS_HUD_SIGNAL)
+    if not signal_updates:
+      continue
+    timestamp = hud_cp.ts_nanos[LKAS_HUD_MSG][LKAS_HUD_SIGNAL]
+    if timestamp >= newest_hud_timestamp:
+      newest_hud_timestamp = timestamp
+      lkas_hud_enabled = oem_lkas_from_hud_disabled(hud_cp.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL])
+  return lkas_hud_enabled
+
+
+def resolve_lkas_enabled(hud_enabled: bool | None, oem_lkas_seen: bool,
+                         oem_lkas_enabled: bool, session_enabled: bool) -> bool:
+  """HUD OEM state wins once seen. Session latch is the ViaLkas helper only."""
+  if hud_enabled is not None:
+    return hud_enabled
+  if oem_lkas_seen:
+    return oem_lkas_enabled
+  return session_enabled
+
+
+def update_lane_policy_button_state(enabled: bool, button: int, prev_button: int,
+                                    via_lkas: bool, suppress: bool) -> bool:
+  """Rising-edge LKA toggle for the session helper. Opt-in only."""
+  if not via_lkas or suppress:
+    return enabled
+  if button != 0 and prev_button == 0:
+    return not enabled
+  return enabled
+
+
 STANDSTILL_THRESHOLD = 10 * 0.0311
 VOLT_EBCM_BRAKE_PRESSED_THRESHOLD = 6 / 0xd0
 AUTO_HOLD_MIN_DRIVE_TIME_S = 3.0
@@ -136,6 +188,11 @@ class CarState(CarStateBase):
     self.moving_backward = False
     self.lkas_previously_enabled = 0
     self.lkas_enabled = 0
+    # Raw LKAButton stays on lkas_enabled for StarPilot remaps.
+    # oem_lkas_enabled is the harness-visible OEM LKAS dash state.
+    self.oem_lkas_enabled = False
+    self.oem_lkas_seen = False
+    self.lane_policy_session = False
     self.pcm_acc_status = AccState.OFF
     self.system_power_mode = 0
     self.startup_acc_fault_suppression_timer = 0.0
@@ -500,6 +557,21 @@ class CarState(CarStateBase):
     lkas_events = [] if (suppress_malibu_side_buttons or suppress_bolt_cancel_lkas) else create_button_events(
       self.lkas_enabled, self.lkas_previously_enabled, {1: ButtonType.lkas}
     )
+    via_lkas = bool(getattr(starpilot_toggles, "lkas_lane_policy_via_lkas", False))
+    hud_enabled = read_oem_lkas_hud(can_parsers)
+    if hud_enabled is not None:
+      self.oem_lkas_seen = True
+      self.oem_lkas_enabled = hud_enabled
+    self.lane_policy_session = update_lane_policy_button_state(
+      self.lane_policy_session,
+      self.lkas_enabled,
+      self.lkas_previously_enabled,
+      via_lkas and not self.oem_lkas_seen,
+      suppress_malibu_side_buttons or suppress_bolt_cancel_lkas,
+    )
+    ret.lkasEnabled = resolve_lkas_enabled(
+      hud_enabled, self.oem_lkas_seen, self.oem_lkas_enabled, self.lane_policy_session,
+    )
     hard_cruise_events = create_button_events(
       self.hard_cruise_buttons, prev_hard_cruise_buttons, HARD_BUTTONS_DICT, unpressed_btn=CruiseButtons.INIT
     )
@@ -636,9 +708,18 @@ class CarState(CarStateBase):
     loopback_messages = [
       ("ASCMLKASteeringCmd", 0),
     ]
+    # Live comma-harness path: the same panda buses StarPilot already uses
+    # (PT=0, obstacle=1, camera/chassis=2). Frequency 0 skips timeout faults
+    # on a bus that does not forward this GMLAN HUD frame.
+    lkas_hud_messages = [
+      (LKAS_HUD_MSG, 0),
+    ]
 
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus.POWERTRAIN),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, CanBus.CAMERA),
       Bus.loopback: CANParser(DBC[CP.carFingerprint][Bus.pt], loopback_messages, CanBus.LOOPBACK),
+      Bus.body: CANParser(LKAS_HUD_DBC, lkas_hud_messages, CanBus.POWERTRAIN),
+      Bus.adas: CANParser(LKAS_HUD_DBC, lkas_hud_messages, CanBus.OBSTACLE),
+      Bus.chassis: CANParser(LKAS_HUD_DBC, lkas_hud_messages, CanBus.CAMERA),
     }
