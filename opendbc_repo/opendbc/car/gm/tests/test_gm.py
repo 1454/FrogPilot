@@ -13,6 +13,7 @@ from opendbc.car.gm.carstate import (
   get_hard_cruise_buttons,
   is_gm_auto_hold_active,
   update_auto_hold_drive_timers,
+  update_lane_policy_button_state,
   update_startup_acc_fault_suppression,
 )
 from opendbc.car.gm.carcontroller import (
@@ -1507,3 +1508,19 @@ class TestGMCarController:
     )
 
     assert get_acc_dashboard_fcw_alert(VisualAlert.none, cs) == 0x3
+
+
+class TestLanePolicyButton:
+  def test_opt_in_defaults_off(self):
+    assert update_lane_policy_button_state(False, 1, 0, False, False) is False
+
+  def test_rising_edge_toggles_when_opted_in(self):
+    assert update_lane_policy_button_state(False, 1, 0, True, False) is True
+    assert update_lane_policy_button_state(True, 1, 0, True, False) is False
+
+  def test_suppressed_cancel_does_not_toggle(self):
+    assert update_lane_policy_button_state(False, 1, 0, True, True) is False
+    assert update_lane_policy_button_state(True, 1, 0, True, True) is True
+
+  def test_held_button_does_not_retrigger(self):
+    assert update_lane_policy_button_state(True, 1, 1, True, False) is True

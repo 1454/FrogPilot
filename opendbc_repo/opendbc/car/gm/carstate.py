@@ -29,6 +29,17 @@ ButtonType = structs.CarState.ButtonEvent.Type
 TransmissionType = structs.CarParams.TransmissionType
 NetworkLocation = structs.CarParams.NetworkLocation
 
+
+def update_lane_policy_button_state(enabled: bool, button: int, prev_button: int,
+                                    via_lkas: bool, suppress: bool) -> bool:
+  """Rising-edge LKA toggle for the session lane-policy bit. Opt-in only."""
+  if not via_lkas or suppress:
+    return enabled
+  if button != 0 and prev_button == 0:
+    return not enabled
+  return enabled
+
+
 STANDSTILL_THRESHOLD = 10 * 0.0311
 VOLT_EBCM_BRAKE_PRESSED_THRESHOLD = 6 / 0xd0
 AUTO_HOLD_MIN_DRIVE_TIME_S = 3.0
@@ -136,7 +147,7 @@ class CarState(CarStateBase):
     self.moving_backward = False
     self.lkas_previously_enabled = 0
     self.lkas_enabled = 0
-    # Persistent OEM LKAS setting for modeld. Separate from the raw LKA button
+    # Session lane-policy bit for modeld. Separate from the raw LKA button
     # used for existing StarPilot button remaps.
     self.oem_lkas_enabled = False
     self.pcm_acc_status = AccState.OFF
@@ -466,29 +477,6 @@ class CarState(CarStateBase):
       self.lkas_enabled = pt_cp.vl["ASCMSteeringButton"]["LKAButton"]
     self.pcm_acc_status = pt_cp.vl["AcceleratorPedal2"]["CruiseState"]
 
-    # The low-speed HUD message drives GM's LKAS disabled indicator. Scan every
-    # externally visible bus and only override the fallback when a fresh
-    # message arrived this update. Otherwise an LKA-button rising edge toggles
-    # a session-only fallback that starts safely disabled.
-    lkas_hud_enabled = None
-    newest_hud_timestamp = 0
-    for hud_bus in (Bus.body, Bus.adas, Bus.chassis):
-      hud_cp = can_parsers.get(hud_bus)
-      if hud_cp is None:
-        continue
-      signal_updates = hud_cp.vl_all["Lane_Departure_Warning_LS"]["LnKpAstDisbldIO"]
-      if signal_updates:
-        timestamp = hud_cp.ts_nanos["Lane_Departure_Warning_LS"]["LnKpAstDisbldIO"]
-        if timestamp >= newest_hud_timestamp:
-          newest_hud_timestamp = timestamp
-          lkas_hud_enabled = hud_cp.vl["Lane_Departure_Warning_LS"]["LnKpAstDisbldIO"] == 0
-
-    if lkas_hud_enabled is not None:
-      self.oem_lkas_enabled = lkas_hud_enabled
-    elif self.lkas_enabled != 0 and self.lkas_previously_enabled == 0:
-      self.oem_lkas_enabled = not self.oem_lkas_enabled
-    ret.lkasEnabled = self.oem_lkas_enabled
-
     # Only activate cancel remap when panda safety was configured for it at startup.
     remap_cancel_to_distance = bool(self.CP.alternativeExperience & ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE)
     malibu_cancel_passthrough = (
@@ -526,6 +514,14 @@ class CarState(CarStateBase):
     lkas_events = [] if (suppress_malibu_side_buttons or suppress_bolt_cancel_lkas) else create_button_events(
       self.lkas_enabled, self.lkas_previously_enabled, {1: ButtonType.lkas}
     )
+    self.oem_lkas_enabled = update_lane_policy_button_state(
+      self.oem_lkas_enabled,
+      self.lkas_enabled,
+      self.lkas_previously_enabled,
+      bool(getattr(starpilot_toggles, "lkas_lane_policy_via_lkas", False)),
+      suppress_malibu_side_buttons or suppress_bolt_cancel_lkas,
+    )
+    ret.lkasEnabled = self.oem_lkas_enabled
     hard_cruise_events = create_button_events(
       self.hard_cruise_buttons, prev_hard_cruise_buttons, HARD_BUTTONS_DICT, unpressed_btn=CruiseButtons.INIT
     )
@@ -662,17 +658,9 @@ class CarState(CarStateBase):
     loopback_messages = [
       ("ASCMLKASteeringCmd", 0),
     ]
-    # Optional state lookup: NaN suppresses CAN-valid/timeout faults when this
-    # low-speed HUD message is not forwarded to a particular harness bus.
-    lkas_hud_messages = [
-      ("Lane_Departure_Warning_LS", float('nan')),
-    ]
 
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus.POWERTRAIN),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, CanBus.CAMERA),
       Bus.loopback: CANParser(DBC[CP.carFingerprint][Bus.pt], loopback_messages, CanBus.LOOPBACK),
-      Bus.body: CANParser('gm_global_a_lowspeed_1818125', lkas_hud_messages, CanBus.POWERTRAIN),
-      Bus.adas: CANParser('gm_global_a_lowspeed_1818125', lkas_hud_messages, CanBus.OBSTACLE),
-      Bus.chassis: CANParser('gm_global_a_lowspeed_1818125', lkas_hud_messages, CanBus.CAMERA),
     }

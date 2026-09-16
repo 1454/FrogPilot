@@ -1473,7 +1473,10 @@ def main(demo=False):
       posenet_send = messaging.new_message('cameraOdometry')
 
       blinkers_active = sm['carState'].leftBlinker or sm['carState'].rightBlinker
-      lane_policy_enabled = bool(sm['carState'].lkasEnabled)
+      lane_policy_enabled = (
+        bool(getattr(starpilot_toggles, "lkas_lane_policy", True)) and
+        bool(sm['carState'].lkasEnabled)
+      )
       if model_lab_active and longitudinal_model_output is not None:
         lateral_action = get_action_from_model(
           lateral_model_output, prev_action,

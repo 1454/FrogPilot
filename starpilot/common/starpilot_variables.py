@@ -860,6 +860,8 @@ class StarPilotVariables:
     toggle.always_on_lateral_lkas = (
       toggle.always_on_lateral and toggle.lkas_allowed_for_aol and lkas_button_assigned_to_aol and not toggle.ford_lkas_aol_toggle
     )
+    toggle.lkas_lane_policy = self.get_value("LkasLanePolicy")
+    toggle.lkas_lane_policy_via_lkas = self.get_value("LkasLanePolicyViaLkas")
     toggle.always_on_lateral_main = toggle.always_on_lateral and not prohibited_main_aol
     toggle.always_on_lateral_pause_speed = self.get_value("PauseAOLOnBrake", cast=float, condition=toggle.always_on_lateral)
 
