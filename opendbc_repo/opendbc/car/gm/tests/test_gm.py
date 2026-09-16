@@ -1555,7 +1555,7 @@ class TestOemLkasHud:
     enabled_msg = packer.make_can_msg(LKAS_HUD_MSG, 0, {LKAS_HUD_SIGNAL: 0})
     disabled_msg = packer.make_can_msg(LKAS_HUD_MSG, 0, {LKAS_HUD_SIGNAL: 1})
 
-    assert enabled_msg[0] == 2152464384
+    assert enabled_msg[0] == 0x804C0000
     parser.update([0, [enabled_msg]])
     assert parser.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL] == 0
     assert oem_lkas_from_hud_disabled(parser.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL]) is True
@@ -1563,6 +1563,29 @@ class TestOemLkasHud:
     parser.update([1, [disabled_msg]])
     assert parser.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL] == 1
     assert oem_lkas_from_hud_disabled(parser.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL]) is False
+
+  def test_hud_live_panda_wire_address_updates_lkas(self):
+    # pandad unpacks header.addr as the raw 29-bit wire id 0x4C0000, not the
+    # Vector-marked DBC address 0x804C0000 that CANPacker emits.
+    packer = CANPacker(LKAS_HUD_DBC)
+    parser = CANParser(LKAS_HUD_DBC, [(LKAS_HUD_MSG, 0)], 0)
+    marked_addr, enabled_dat, bus = packer.make_can_msg(LKAS_HUD_MSG, 0, {LKAS_HUD_SIGNAL: 0})
+    _, disabled_dat, _ = packer.make_can_msg(LKAS_HUD_MSG, 0, {LKAS_HUD_SIGNAL: 1})
+    assert marked_addr == 0x804C0000
+    wire_addr = marked_addr & 0x1FFFFFFF
+    assert wire_addr == 0x4C0000
+
+    parser.update([0, [(wire_addr, enabled_dat, bus)]])
+    assert parser.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL] == 0
+    hud_enabled = read_oem_lkas_hud({Bus.body: parser})
+    assert hud_enabled is True
+    assert resolve_lkas_enabled(hud_enabled, False, False, False) is True
+
+    parser.update([1, [(wire_addr, disabled_dat, bus)]])
+    assert parser.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL] == 1
+    hud_enabled = read_oem_lkas_hud({Bus.body: parser})
+    assert hud_enabled is False
+    assert resolve_lkas_enabled(hud_enabled, True, True, True) is False
 
   def test_read_oem_lkas_hud_uses_newest_live_bus(self):
     older = CANParser(LKAS_HUD_DBC, [(LKAS_HUD_MSG, 0)], 0)
@@ -1589,7 +1612,7 @@ class TestOemLkasHud:
     assert LKAS_HUD_MSG in parsers[Bus.body].vl
     assert LKAS_HUD_MSG in parsers[Bus.adas].vl
     assert LKAS_HUD_MSG in parsers[Bus.chassis].vl
-    hud_addr = 2152464384
+    hud_addr = 0x804C0000
     assert parsers[Bus.body].message_states[hud_addr].ignore_alive
     assert parsers[Bus.adas].message_states[hud_addr].ignore_alive
     assert parsers[Bus.chassis].message_states[hud_addr].ignore_alive

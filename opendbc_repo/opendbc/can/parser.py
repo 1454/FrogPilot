@@ -9,6 +9,16 @@ from opendbc.can.dbc import DBC, Signal
 
 MAX_BAD_COUNTER = 5
 CAN_INVALID_CNT = 5
+# Vector CANdb++ sets bit 31 on 29-bit IDs. pandad publishes the raw 29-bit wire address.
+CAN_EXTENDED_ID_FLAG = 0x80000000
+CAN_EXTENDED_ID_MASK = 0x1FFFFFFF
+
+
+def alt_dbc_address(address: int) -> int:
+  """Map a Vector-marked DBC address to the pandad wire address, or the reverse."""
+  if address & CAN_EXTENDED_ID_FLAG:
+    return address & CAN_EXTENDED_ID_MASK
+  return address | CAN_EXTENDED_ID_FLAG
 
 
 def get_raw_value(dat: bytes | bytearray, sig: Signal) -> int:
@@ -237,20 +247,22 @@ class CANParser:
           continue
         bus_empty = False
         state = self.message_states.get(address)
+        if state is None:
+          state = self.message_states.get(alt_dbc_address(address))
         if state is None or len(dat) > 64:
           continue
         if state.parse(t, dat):
-          updated_addrs.add(address)
+          updated_addrs.add(state.address)
 
-          vl_addr = self.vl[address]
-          vl_all_addr = self.vl_all[address]
-          ts_addr = self.ts_nanos[address]
+          vl_addr = self.vl[state.address]
+          vl_all_addr = self.vl_all[state.address]
+          ts_addr = self.ts_nanos[state.address]
 
           for i, sig in enumerate(state.signals):
             vl_addr[sig.name] = state.vals[i]
             vl_all_addr[sig.name] = state.all_vals[i]
             ts_addr[sig.name] = state.timestamps[-1]
-          self.vl_raw[address] = bytes(dat)
+          self.vl_raw[state.address] = bytes(dat)
           self.vl_raw[state.name] = bytes(dat)
 
       if not bus_empty:
