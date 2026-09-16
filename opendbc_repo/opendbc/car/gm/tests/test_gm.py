@@ -10,8 +10,14 @@ from opendbc.car.car_helpers import interfaces
 from opendbc.car.gm import gmcan
 from opendbc.car.gm.carstate import (
   CarState as GMCarState,
+  LKAS_HUD_DBC,
+  LKAS_HUD_MSG,
+  LKAS_HUD_SIGNAL,
   get_hard_cruise_buttons,
   is_gm_auto_hold_active,
+  oem_lkas_from_hud_disabled,
+  read_oem_lkas_hud,
+  resolve_lkas_enabled,
   update_auto_hold_drive_timers,
   update_lane_policy_button_state,
   update_startup_acc_fault_suppression,
@@ -1524,3 +1530,66 @@ class TestLanePolicyButton:
 
   def test_held_button_does_not_retrigger(self):
     assert update_lane_policy_button_state(True, 1, 1, True, False) is True
+
+
+class TestOemLkasHud:
+  def test_hud_disabled_io_is_inverted(self):
+    assert oem_lkas_from_hud_disabled(0) is True
+    assert oem_lkas_from_hud_disabled(1) is False
+
+  def test_hud_wins_over_session_helper(self):
+    assert resolve_lkas_enabled(True, False, False, False) is True
+    assert resolve_lkas_enabled(False, True, True, True) is False
+
+  def test_last_hud_value_holds_between_frames(self):
+    assert resolve_lkas_enabled(None, True, True, False) is True
+    assert resolve_lkas_enabled(None, True, False, True) is False
+
+  def test_session_helper_only_before_hud(self):
+    assert resolve_lkas_enabled(None, False, False, True) is True
+    assert resolve_lkas_enabled(None, False, False, False) is False
+
+  def test_hud_29bit_roundtrip_on_powertrain_bus(self):
+    packer = CANPacker(LKAS_HUD_DBC)
+    parser = CANParser(LKAS_HUD_DBC, [(LKAS_HUD_MSG, 0)], 0)
+    enabled_msg = packer.make_can_msg(LKAS_HUD_MSG, 0, {LKAS_HUD_SIGNAL: 0})
+    disabled_msg = packer.make_can_msg(LKAS_HUD_MSG, 0, {LKAS_HUD_SIGNAL: 1})
+
+    assert enabled_msg[0] == 2152464384
+    parser.update([0, [enabled_msg]])
+    assert parser.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL] == 0
+    assert oem_lkas_from_hud_disabled(parser.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL]) is True
+
+    parser.update([1, [disabled_msg]])
+    assert parser.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL] == 1
+    assert oem_lkas_from_hud_disabled(parser.vl[LKAS_HUD_MSG][LKAS_HUD_SIGNAL]) is False
+
+  def test_read_oem_lkas_hud_uses_newest_live_bus(self):
+    older = CANParser(LKAS_HUD_DBC, [(LKAS_HUD_MSG, 0)], 0)
+    newer = CANParser(LKAS_HUD_DBC, [(LKAS_HUD_MSG, 0)], 2)
+    packer = CANPacker(LKAS_HUD_DBC)
+    older.update([1, [packer.make_can_msg(LKAS_HUD_MSG, 0, {LKAS_HUD_SIGNAL: 1})]])
+    newer.update([5, [packer.make_can_msg(LKAS_HUD_MSG, 2, {LKAS_HUD_SIGNAL: 0})]])
+
+    assert read_oem_lkas_hud({Bus.body: older, Bus.chassis: newer}) is True
+    assert read_oem_lkas_hud({Bus.body: older}) is False
+    assert read_oem_lkas_hud({}) is None
+
+  def test_get_can_parsers_listen_for_hud_on_live_harness_buses(self):
+    cp = SimpleNamespace(
+      brand="gm",
+      carFingerprint=CAR.CHEVROLET_SILVERADO,
+      flags=0,
+      networkLocation=structs.CarParams.NetworkLocation.fwdCamera,
+      transmissionType=structs.CarParams.TransmissionType.automatic,
+      enableBsm=False,
+      enableGasInterceptorDEPRECATED=False,
+    )
+    parsers = GMCarState.get_can_parsers(cp)
+    assert LKAS_HUD_MSG in parsers[Bus.body].vl
+    assert LKAS_HUD_MSG in parsers[Bus.adas].vl
+    assert LKAS_HUD_MSG in parsers[Bus.chassis].vl
+    hud_addr = 2152464384
+    assert parsers[Bus.body].message_states[hud_addr].ignore_alive
+    assert parsers[Bus.adas].message_states[hud_addr].ignore_alive
+    assert parsers[Bus.chassis].message_states[hud_addr].ignore_alive

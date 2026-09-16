@@ -1,8 +1,8 @@
-"""LKAS-button full-lane midpoint policy for modeld.
+"""OEM LKAS full-lane midpoint policy for modeld.
 
-When the kill switch is on and carState.lkasEnabled is set, a clean stable
-pair of inner lane lines gets full midpoint authority. Otherwise the exact
-upstream E2E curvature is returned. This is an A/B switch, not a blend.
+When the kill switch is on and carState.lkasEnabled reports OEM LKAS on, a
+clean stable pair of inner lane lines gets full midpoint authority. Otherwise
+the exact upstream E2E curvature is returned. This is an A/B switch, not a blend.
 
 There is no explicit speed gate, but valid_plan requires a 12 m lookahead
 inside the plan horizon. Real plan x is about v_ego * T_IDXS, so the lock
