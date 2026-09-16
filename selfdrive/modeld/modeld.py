@@ -37,6 +37,7 @@ from openpilot.selfdrive.modeld.camera_offset import CameraOffset, DEFAULT_CAMER
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_pose_msg, PublishState, get_curvature_from_output
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
+from openpilot.selfdrive.modeld.lkas_lane_policy import apply_lane_lock
 from openpilot.selfdrive.modeld.compile_modeld import (
   ARTIFACT_FORMAT_VERSION,
   FAST_POLICY_INPUTS,
@@ -401,13 +402,16 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
                           lat_action_t: float, long_action_t: float, v_ego: float, mlsim: bool,
                           is_v9: bool, is_v14: bool, is_v15: bool, starpilot_toggles,
                           lat_smooth_seconds=LAT_SMOOTH_SECONDS, long_smooth_seconds=LONG_SMOOTH_SECONDS,
-                          is_v16: bool = False) -> log.ModelDataV2.Action:
+                          is_v16: bool = False, blinkers_active: bool = False,
+                          lane_policy_enabled: bool = False) -> log.ModelDataV2.Action:
     if is_v14 or is_v15 or is_v16:
       desired_curv_unscaled, desired_accel = model_output['action'][0]
       if is_v15 or is_v16:
         desired_curvature = float(desired_curv_unscaled) / max(1.0, v_ego) ** 2
       else:
         desired_curvature = float(desired_curv_unscaled) / 100.0
+      desired_curvature = apply_lane_lock(model_output, desired_curvature, v_ego,
+                                          blinkers_active, lane_policy_enabled)
       should_stop = (v_ego < 0.3 and desired_accel < 0.1)
 
       desired_accel = smooth_value(float(desired_accel), prev_action.desiredAcceleration, long_smooth_seconds)
@@ -441,6 +445,8 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
         desired_curvature = prev_action.desiredCurvature
     else:
       desired_curvature = get_curvature_from_output(model_output, plan, v_ego, lat_action_t, mlsim=mlsim)
+    desired_curvature = apply_lane_lock(model_output, desired_curvature, v_ego,
+                                        blinkers_active, lane_policy_enabled)
     if v_ego > MIN_LAT_CONTROL_SPEED:
       desired_curvature = smooth_value(desired_curvature, prev_action.desiredCurvature, lat_smooth_seconds)
     else:
@@ -1466,6 +1472,8 @@ def main(demo=False):
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')
 
+      blinkers_active = sm['carState'].leftBlinker or sm['carState'].rightBlinker
+      lane_policy_enabled = bool(sm['carState'].lkasEnabled)
       if model_lab_active and longitudinal_model_output is not None:
         lateral_action = get_action_from_model(
           lateral_model_output, prev_action,
@@ -1473,6 +1481,7 @@ def main(demo=False):
           long_action_t,
           v_ego, model.mlsim, model.is_v9, model.is_v14, model.is_v15, starpilot_toggles,
           lat_smooth_seconds, long_smooth_seconds, is_v16=model.is_v16,
+          blinkers_active=blinkers_active, lane_policy_enabled=lane_policy_enabled,
         )
         longitudinal_action = get_action_from_model(
           longitudinal_model_output, prev_action,
@@ -1490,6 +1499,7 @@ def main(demo=False):
           long_action_t,
           v_ego, model.mlsim, model.is_v9, model.is_v14, model.is_v15, starpilot_toggles,
           lat_smooth_seconds, long_smooth_seconds, is_v16=model.is_v16,
+          blinkers_active=blinkers_active, lane_policy_enabled=lane_policy_enabled,
         )
       prev_action = action
       fill_model_msg(drivingdata_send, modelv2_send, model_output, action,
