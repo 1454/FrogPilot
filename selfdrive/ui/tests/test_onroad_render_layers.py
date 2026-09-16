@@ -89,6 +89,10 @@ def _load_starpilot_onroad_view(monkeypatch):
   )
   stub_module("openpilot.selfdrive.ui.onroad.starpilot.weather_icon", render_weather_icon=lambda *_args: None)
   stub_module(
+    "openpilot.selfdrive.ui.onroad.starpilot.lkas_lane_policy_test_ui",
+    lkas_lane_policy_test_hud_lines=lambda *_args: None,
+  )
+  stub_module(
     "openpilot.selfdrive.ui.lib.starpilot_status",
     get_screen_edge_color=lambda *_args: color,
     ENGAGED_COLOR=color,

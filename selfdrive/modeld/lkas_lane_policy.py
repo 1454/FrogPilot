@@ -41,6 +41,9 @@ LANE_LOCK_RELEASE_TIME = 0.15                   # seconds
 LANE_LOCK_CURVATURE_TIME = 0.25                 # seconds
 LANE_LOCK_MAX_LANE_CHANGE_PROB = 0.10
 LANE_LOCK_LOG_INTERVAL = 1.0                    # seconds
+LANE_LOCK_MODE_PARAM = "LkasLanePolicyLockMode"
+LANE_LOCK_FULL_WEIGHT = 0.98
+LANE_LOCK_FALLBACK_PREFIX = "lane-policy fallback: "
 
 _lane_lock_weight = 0.0
 _lane_lock_lane_curvature = 0.0
@@ -49,6 +52,8 @@ _lane_lock_full_active = False
 _lane_lock_error_logged = False
 _lane_lock_mode = None
 _lane_lock_last_log_time = 0.0
+_lane_lock_mode_sink = None
+_lane_lock_params = None
 
 
 def reset_lane_lock() -> None:
@@ -61,6 +66,45 @@ def reset_lane_lock() -> None:
   _lane_lock_full_active = False
 
 
+def _publish_lane_lock_mode(mode: str) -> None:
+  """Write the mode param only when the caller already detected a change."""
+  global _lane_lock_params
+  if _lane_lock_mode_sink is not None:
+    _lane_lock_mode_sink(mode)
+    return
+  try:
+    if _lane_lock_params is None:
+      from openpilot.common.params import Params
+      _lane_lock_params = Params()
+    _lane_lock_params.put_nonblocking(LANE_LOCK_MODE_PARAM, mode)
+  except Exception:
+    pass
+
+
+def lane_lock_hud_label(mode: str | None) -> str:
+  """Short onroad label for testers. Keep the raw mode string in the param."""
+  if not mode:
+    return "unknown"
+  if mode == "lane-policy off":
+    return "off"
+  if mode == "locking (lane-policy on)":
+    return "locking"
+  if mode == "full-lane midpoint (lane-policy on)":
+    return "full midpoint"
+  if mode.startswith(LANE_LOCK_FALLBACK_PREFIX):
+    return mode[len(LANE_LOCK_FALLBACK_PREFIX):]
+  return mode
+
+
+def format_lkas_lane_policy_test_hud(lane_policy_on: bool, oem_lkas_on: bool | None,
+                                    lock_mode: str | None, via_lkas_on: bool = False) -> list[str]:
+  oem = "n/a" if oem_lkas_on is None else ("ON" if oem_lkas_on else "off")
+  return [
+    f"LP {'ON' if lane_policy_on else 'off'}  OEM {oem}  VIA {'ON' if via_lkas_on else 'off'}",
+    f"LOCK {lane_lock_hud_label(lock_mode)}",
+  ]
+
+
 def log_lane_lock_mode(mode: str) -> None:
   """Record every mode change. Rate-limit only the emitted rlog line."""
   global _lane_lock_mode, _lane_lock_last_log_time
@@ -71,6 +115,7 @@ def log_lane_lock_mode(mode: str) -> None:
     cloudlog.info(f"lkas-lp-toggle: {mode}")
     _lane_lock_last_log_time = now
   _lane_lock_mode = mode
+  _publish_lane_lock_mode(mode)
 
 
 def inner_lane_line_probs(model_output: dict[str, np.ndarray]) -> tuple[float, float] | None:
@@ -233,7 +278,10 @@ def apply_lane_lock(model_output: dict[str, np.ndarray], e2e_curvature: float, v
     return float(e2e_curvature)
 
   if candidate_lane_curvature is not None:
-    log_lane_lock_mode("full-lane midpoint (lane-policy on)")
+    if _lane_lock_weight >= LANE_LOCK_FULL_WEIGHT:
+      log_lane_lock_mode("full-lane midpoint (lane-policy on)")
+    else:
+      log_lane_lock_mode("locking (lane-policy on)")
   else:
     log_lane_lock_mode(fallback_reason)
   return float(e2e_curvature + _lane_lock_weight * (_lane_lock_lane_curvature - e2e_curvature))

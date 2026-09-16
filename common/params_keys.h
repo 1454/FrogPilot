@@ -474,6 +474,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LeadInfoMode", {PERSISTENT, INT, "2", "2", 3}},
     {"LKASButtonControl", {PERSISTENT, INT, "5", "0", 2, SETTINGS_SIMPLE}},
     {"LkasLanePolicy", {PERSISTENT, BOOL, "1", "0", 2}},
+    {"LkasLanePolicyLockMode", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, STRING, "", ""}},
+    {"LkasLanePolicyTestUi", {PERSISTENT, BOOL, "1", "0", 2}},
     {"LkasLanePolicyViaLkas", {PERSISTENT, BOOL, "0", "0", 2}},
     {"LockDoors", {PERSISTENT, BOOL, "1", "0", 0}},
     {"LockDoorsTimer", {PERSISTENT, INT, "0", "0", 0}},
