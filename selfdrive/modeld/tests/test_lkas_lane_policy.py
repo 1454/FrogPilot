@@ -92,11 +92,17 @@ def test_lkas_off_returns_raw_e2e_and_clears_state():
   assert policy._lane_lock_has_lane_curvature is False
 
 
-def test_blinker_releases_immediately_to_e2e():
+def test_blinker_ramps_out_instead_of_snapping():
   policy.apply_lane_lock(_straight_lane_output(), 0.0, 20.0, lane_policy_enabled=True)
-  out = policy.apply_lane_lock(_straight_lane_output(), 0.02, 20.0, blinkers_active=True, lane_policy_enabled=True)
-  assert out == pytest.approx(0.02)
-  assert policy._lane_lock_weight == 0.0
+  first = policy.apply_lane_lock(_straight_lane_output(), 0.02, 20.0, blinkers_active=True, lane_policy_enabled=True)
+  assert policy._lane_lock_full_active is False
+  assert policy._lane_lock_weight > 0.0
+  assert first != pytest.approx(0.02)
+  last = first
+  for _ in range(40):
+    last = policy.apply_lane_lock(_straight_lane_output(), 0.02, 20.0, blinkers_active=True, lane_policy_enabled=True)
+  assert last == pytest.approx(0.02, abs=1e-5)
+  assert policy._lane_lock_weight < 1e-3
 
 
 def test_lane_change_intent_releases_to_e2e():
